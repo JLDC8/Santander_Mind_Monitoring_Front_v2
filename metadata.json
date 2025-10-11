@@ -1,0 +1,5 @@
+{
+  "name": "Santander Mind Monitoring v2",
+  "description": "An application to monitor and visualize data from a local API, with a Santander-inspired theme.",
+  "requestFramePermissions": []
+}
