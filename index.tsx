@@ -19,10 +19,16 @@ interface PivotTableData {
     rows: string[][];
 }
 
+interface Link {
+    name: string;
+    url: string;
+}
+
 interface ItemData {
     graphs: { [graphName: string]: GraphData };
     standardTables: { [tableName: string]: StandardTableData };
     pivotTables: { [tableName: string]: PivotTableData };
+    links: Link[];
 }
 
 interface ProcessedResults {
@@ -68,6 +74,12 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
         return hour < 6 ? hour + 24 : hour;
     };
     
+    const initializeItem = (itemName: string) => {
+        if (!processed[itemName]) {
+            processed[itemName] = { graphs: {}, standardTables: {}, pivotTables: {}, links: [] };
+        }
+    };
+
     // Temporary structure for raw table data to be pivoted
     const rawTableData: {
         [itemName: string]: {
@@ -80,16 +92,19 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
 
     rawLines.forEach(line => {
         const parts = line.split(';');
-        if (parts.length < 5) return;
+        if (parts.length < 3) return;
+
+        if (parts[0] === 'LINK') {
+            if (parts.length === 4) {
+                const [, itemName, linkName, linkUrl] = parts;
+                initializeItem(itemName);
+                processed[itemName].links.push({ name: linkName, url: linkUrl });
+            }
+            return; // Link processed, continue to next line
+        }
 
         const [timeRange, itemName, dataType] = parts;
 
-        const initializeItem = (itemName: string) => {
-            if (!processed[itemName]) {
-                processed[itemName] = { graphs: {}, standardTables: {}, pivotTables: {} };
-            }
-        };
-        
         initializeItem(itemName);
 
         if (dataType === 'numero' && parts.length === 5) {
@@ -682,6 +697,7 @@ const App = () => {
                 
                 const currentTabData: ItemData | null = activeTab ? processedData[activeTab] : null;
                 const hasGraphs = currentTabData && Object.keys(currentTabData.graphs).length > 0;
+                const hasLinks = currentTabData && currentTabData.links && currentTabData.links.length > 0;
                 const hasStandardTables = currentTabData && Object.keys(currentTabData.standardTables).length > 0;
                 const hasPivotTables = currentTabData && Object.keys(currentTabData.pivotTables).length > 0;
 
@@ -748,6 +764,19 @@ const App = () => {
                                                     </div>
                                                 )
                                             })}
+                                        </div>
+                                    </div>
+                                )}
+                                {hasLinks && (
+                                    <div className="card report-section">
+                                        <h2 className="section-title">Direct Links</h2>
+                                        <div className="links-container">
+                                            {currentTabData.links.map((link, index) => (
+                                                <a href={link.url} key={index} target="_blank" rel="noopener noreferrer" className="link-pill">
+                                                    {link.name}
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                                </a>
+                                            ))}
                                         </div>
                                     </div>
                                 )}
