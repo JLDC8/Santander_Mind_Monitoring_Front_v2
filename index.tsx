@@ -38,6 +38,25 @@ interface ApiResponse {
 // --- API CONFIG ---
 const POLLING_INTERVAL = 5000; // 5 seconds
 
+// --- HELPERS ---
+const getInitialStartDate = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}T00:00`;
+};
+
+const getInitialEndDate = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hour = String(now.getHours()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hour}:00`;
+};
+
+
 // --- DATA PARSER ---
 const parseAndOrganizeData = (rawData: string): ProcessedResults => {
     const processed: ProcessedResults = {};
@@ -269,8 +288,8 @@ const ChartComponent = ({ chartData, chartType, chartLabel, setCanvasRef, isZoom
 // --- Main App Component ---
 const App = () => {
     const [apiUrl, setApiUrl] = useState('http://127.0.0.1:5000');
-    const [startDate, setStartDate] = useState('2025-10-09T09:00');
-    const [endDate, setEndDate] = useState('2025-10-09T17:00');
+    const [startDate, setStartDate] = useState(getInitialStartDate);
+    const [endDate, setEndDate] = useState(getInitialEndDate);
     const [interval, setInterval] = useState('60');
     
     const [status, setStatus] = useState<'idle' | 'pending' | 'polling' | 'completed' | 'error'>('idle');
@@ -290,6 +309,7 @@ const App = () => {
 
     const pollingRef = useRef<number | null>(null);
     const chartCanvasRefs = useRef<{ [key: string]: HTMLCanvasElement | null }>({});
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         document.body.className = theme;
@@ -517,6 +537,61 @@ const App = () => {
 
         pptx.writeFile({ fileName: `Monitoring_Report_${Date.now()}.pptx` });
     };
+
+    const handleJsonExport = () => {
+        if (!processedData) return;
+        const dataStr = JSON.stringify(processedData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `Monitoring_Report_data_${Date.now()}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleLoadReportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleJsonFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result;
+                if (typeof text !== 'string') throw new Error("File content is not readable.");
+                const data = JSON.parse(text);
+                if (typeof data !== 'object' || data === null || Object.keys(data).length === 0) {
+                    throw new Error("Invalid or empty JSON file.");
+                }
+                stopPolling();
+                setProcessedData(data);
+                setStatus('completed');
+                setErrorMessage('');
+                setRawResponse(JSON.stringify({
+                    status: 'completed',
+                    message: 'Loaded from file.',
+                    results: { resumen: 'Data loaded from local JSON file.' }
+                }, null, 2));
+            } catch (error) {
+                setStatus('error');
+                setErrorMessage(error instanceof Error ? `Failed to load report: ${error.message}` : 'An unknown error occurred while loading the report.');
+                setProcessedData(null);
+            } finally {
+                if (event.target) event.target.value = '';
+            }
+        };
+        reader.onerror = () => {
+            setStatus('error');
+            setErrorMessage('Failed to read the file.');
+            setProcessedData(null);
+        };
+        reader.readAsText(file);
+    };
     
     const getButtonState = () => {
         const connected = connectionStatus === 'connected';
@@ -675,9 +750,12 @@ const App = () => {
                         <div className="form-group"><label htmlFor="start-date">Start Date & Time</label><input type="datetime-local" id="start-date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required /></div>
                         <div className="form-group"><label htmlFor="end-date">End Date & Time</label><input type="datetime-local" id="end-date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required /></div>
                         <div className="form-group"><label htmlFor="interval">Interval (minutes)</label><input type="number" id="interval" value={interval} onChange={(e) => setInterval(e.target.value)} min="1" required /></div>
-                        <button type="submit" className="submit-btn" disabled={getButtonState().disabled}>{getButtonState().text}</button>
+                        <div className="form-actions">
+                            <button type="submit" className="submit-btn" disabled={getButtonState().disabled}>{getButtonState().text}</button>
+                        </div>
                     </div>
                 </form>
+                <input type="file" ref={fileInputRef} onChange={handleJsonFileChange} accept=".json" style={{ display: 'none' }} aria-hidden="true" />
             </section>
             
             {renderContent()}
@@ -700,6 +778,12 @@ const App = () => {
                     </button>
                     <button className="icon-btn" onClick={handleExport} disabled={!processedData} aria-label="Export to PowerPoint">
                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 256 256"><path fill="currentColor" d="M48 21.333V234.667c0 7.36 5.973 13.333 13.333 13.333h133.334c7.36 0 13.333-5.973 13.333-13.333v-96L142.667 80H61.333C53.973 80 48 74.027 48 66.667V21.333z"/><path fill="currentColor" d="M149.333 21.333v58.667c0 7.36 5.973 13.333 13.333 13.333h53.334z"/><path fill="#FFF" d="M128 117.333c-23.52 0-42.667 19.147-42.667 42.667s19.147 42.667 42.667 42.667 42.667-19.147 42.667-42.667-19.147-42.667-42.667-42.667zm0 64c-11.733 0-21.333-9.6-21.333-21.333S116.267 138.667 128 138.667s21.333 9.6 21.333 21.333S139.733 181.333 128 181.333z"/><path fill="#FFF" d="M101.333 149.333a5.333 5.333 0 0 0-5.333 5.333v2.667c0 8.853 7.147 16 16 16h8c2.947 0 5.333-2.387 5.333-5.333s-2.387-5.333-5.333-5.333h-8c-3.52 0-6.667-2.827-6.667-6.347v-1.653a5.333 5.333 0 0 0-5.333-5.333z"/></svg>
+                    </button>
+                    <button className="icon-btn" onClick={handleLoadReportClick} disabled={status === 'pending' || status === 'polling'} aria-label="Load JSON Report">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    </button>
+                    <button className="icon-btn" onClick={handleJsonExport} disabled={!processedData} aria-label="Download JSON Report">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     </button>
                     <button className="icon-btn" onClick={() => setRawModalOpen(true)} disabled={!rawResponse} aria-label="Show raw API response">
                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>

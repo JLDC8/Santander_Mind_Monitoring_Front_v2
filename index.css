@@ -164,8 +164,6 @@ body {
 }
 
 .submit-btn {
-  background: linear-gradient(90deg, var(--santander-red) 0%, #c80000 100%);
-  color: var(--santander-white);
   border: none;
   padding: 0.85rem;
   border-radius: 6px;
@@ -178,6 +176,11 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+}
+
+.submit-btn {
+  background: linear-gradient(90deg, var(--santander-red) 0%, #c80000 100%);
+  color: var(--santander-white);
   box-shadow: 0 4px 15px var(--shadow-red);
 }
 
@@ -195,6 +198,7 @@ body {
     box-shadow: none;
     cursor: not-allowed;
 }
+
 
 /* --- Status & Error --- */
 .status-container, .error-container {

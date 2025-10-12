@@ -1,5 +1,5 @@
 {
-  "name": "Santander Mind Monitoring v2",
-  "description": "An application to monitor and visualize data from a local API, with a Santander-inspired theme.",
+  "name": "Santander Mind Monitoring v3",
+  "description": "Versión con descarga y carga de JSON",
   "requestFramePermissions": []
 }
