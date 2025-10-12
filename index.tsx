@@ -67,6 +67,15 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
         const hour = parseInt(timeRangeString.split(':')[0], 10);
         return hour < 6 ? hour + 24 : hour;
     };
+    
+    // Temporary structure to hold raw table data before pivoting
+    const rawTableData: {
+        [itemName: string]: {
+            [tableName: string]: {
+                rows: { timeRange: string; columns: string[] }[];
+            }
+        }
+    } = {};
 
     rawLines.forEach(line => {
         const initializeItem = (itemName: string) => {
@@ -75,39 +84,27 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
             }
         };
 
-        if (line.startsWith('TABLE;')) {
-            const parts = line.substring(6).split(';');
-            if (parts.length < 4) return;
-            const [item, timeRange, dataName, columnsStr] = [parts[0], parts[1], parts[2], parts.slice(3).join(';')];
-            const columns = columnsStr.split('|');
-
-            initializeItem(item);
-            if (!processed[item].standardTables[dataName]) {
-                processed[item].standardTables[dataName] = { rows: [] };
-            }
-            processed[item].standardTables[dataName].rows.push({ timeRange, columns });
-
-        } else if (line.startsWith('PIVOT_HEADER;')) {
-            const parts = line.substring(13).split(';');
-            if (parts.length < 3) return;
-            const [item, dataName, ...headers] = parts;
-
-            initializeItem(item);
-            if (!processed[item].pivotTables[dataName]) {
-                processed[item].pivotTables[dataName] = { headers: [], rows: [] };
-            }
-            processed[item].pivotTables[dataName].headers = headers;
-
-        } else if (line.startsWith('PIVOT_ROW;')) {
+        if (line.startsWith('TABLE_ROW;')) {
             const parts = line.substring(10).split(';');
-            if (parts.length < 4) return;
-            const [item, dataName, ...rowData] = parts;
+            if (parts.length < 4) return; // Must have at least ITEM;KEY;RANGE;COL0
 
+            const [item, dataKey, timeRange, ...columns] = parts;
+
+            const lastUnderscoreIndex = dataKey.lastIndexOf('_');
+            if (lastUnderscoreIndex === -1) return; // Invalid format for dataKey
+
+            const tableName = dataKey.substring(0, lastUnderscoreIndex);
+            
+            // Initialize structures
             initializeItem(item);
-            if (!processed[item].pivotTables[dataName]) {
-                processed[item].pivotTables[dataName] = { headers: [], rows: [] };
+            if (!rawTableData[item]) {
+                rawTableData[item] = {};
             }
-            processed[item].pivotTables[dataName].rows.push(rowData);
+            if (!rawTableData[item][tableName]) {
+                rawTableData[item][tableName] = { rows: [] };
+            }
+
+            rawTableData[item][tableName].rows.push({ timeRange, columns });
 
         } else { // Graph data
             const parts = line.split(';');
@@ -127,9 +124,70 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
         }
     });
 
-    // Post-processing: Sort graph data and ensure pivot tables have default headers if none provided
+    // --- PIVOTING LOGIC ---
+    for (const itemName in rawTableData) {
+        for (const tableName in rawTableData[itemName]) {
+            const tableData = rawTableData[itemName][tableName];
+            const { rows } = tableData;
+            
+            if (rows.length === 0) continue;
+
+            const valueColumnIndex = rows[0].columns.length - 1; // Assume last column is the numeric value
+
+            // 1. Group rows by a composite key of all non-value columns
+            const groupedData = new Map<string, { keyColumns: string[], rows: { timeRange: string, value: number }[] }>();
+
+            rows.forEach(row => {
+                const keyColumns = row.columns.slice(0, valueColumnIndex);
+                const groupKey = keyColumns.join('||'); // Composite key
+                const valueStr = row.columns[valueColumnIndex];
+                const value = parseFloat(valueStr) || 0;
+
+                if (!groupedData.has(groupKey)) {
+                    groupedData.set(groupKey, { keyColumns, rows: [] });
+                }
+                groupedData.get(groupKey)!.rows.push({ timeRange: row.timeRange, value });
+            });
+
+            // 2. Determine all unique time ranges and sort them
+            const timeRanges = [...new Set(rows.map(r => r.timeRange))].sort((a, b) => getSortableHour(a) - getSortableHour(b));
+
+            // 3. Create headers dynamically
+            const numKeyColumns = valueColumnIndex > 0 ? valueColumnIndex : 0;
+            const keyHeaders = Array.from({ length: numKeyColumns }, (_, i) => `Column ${i + 1}`);
+            const finalHeaders = [...keyHeaders, 'Total', ...timeRanges];
+
+            // 4. Build the pivoted rows from grouped data
+            const pivotedRows: string[][] = [];
+            for (const data of groupedData.values()) {
+                const newRow: (string|number)[] = [...data.keyColumns];
+                
+                // Calculate Total
+                const total = data.rows.reduce((sum, r) => sum + r.value, 0);
+                newRow.push(total);
+
+                // Create a map for quick lookup of time range values
+                const timeRangeMap = new Map(data.rows.map(r => [r.timeRange, r.value]));
+                
+                // Fill in values for each time range column
+                for (const timeRange of timeRanges) {
+                    newRow.push(timeRangeMap.get(timeRange) || 0);
+                }
+                
+                pivotedRows.push(newRow.map(String));
+            }
+            
+            // 5. Store in final processed data structure, which now uses pivotTables for all tables
+            if (!processed[itemName].pivotTables) processed[itemName].pivotTables = {};
+            processed[itemName].pivotTables[tableName] = {
+                headers: finalHeaders,
+                rows: pivotedRows
+            };
+        }
+    }
+
+    // Post-processing: Sort graph data
     for (const item in processed) {
-        // Sort graphs
         for (const graphName in processed[item].graphs) {
             const graphData = processed[item].graphs[graphName] as any;
             if (graphData.tuples) {
@@ -137,14 +195,6 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
                 processed[item].graphs[graphName].labels = graphData.tuples.map((t: any) => t.timeRange);
                 processed[item].graphs[graphName].values = graphData.tuples.map((t: any) => t.value);
                 delete graphData.tuples;
-            }
-        }
-        // Default pivot headers
-        for (const tableName in processed[item].pivotTables) {
-            const pivotTable = processed[item].pivotTables[tableName];
-            if (pivotTable.headers.length === 0 && pivotTable.rows.length > 0) {
-                const numCols = pivotTable.rows[0].length;
-                pivotTable.headers = Array.from({ length: numCols }, (_, i) => `Column ${i + 1}`);
             }
         }
     }
@@ -710,7 +760,7 @@ const App = () => {
                                 )}
                                 {hasPivotTables && (
                                      <div className="card report-section">
-                                        <h2 className="section-title">Pivot Tables</h2>
+                                        <h2 className="section-title">Tables</h2>
                                         {Object.entries(currentTabData.pivotTables).map(([tableName, pivotData]) => (
                                             <div className="table-wrapper" key={tableName}>
                                                 <h3>{tableName}</h3>
