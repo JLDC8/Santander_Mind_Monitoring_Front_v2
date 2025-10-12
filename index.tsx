@@ -68,59 +68,53 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
         return hour < 6 ? hour + 24 : hour;
     };
     
-    // Temporary structure to hold raw table data before pivoting
+    // Temporary structure for raw table data
     const rawTableData: {
         [itemName: string]: {
             [tableName: string]: {
+                keyIndex: number;
                 rows: { timeRange: string; columns: string[] }[];
             }
         }
     } = {};
 
     rawLines.forEach(line => {
+        const parts = line.split(';');
+        if (parts.length < 5) return;
+
+        const [timeRange, itemName, dataType] = parts;
+
         const initializeItem = (itemName: string) => {
             if (!processed[itemName]) {
                 processed[itemName] = { graphs: {}, standardTables: {}, pivotTables: {} };
             }
         };
+        
+        initializeItem(itemName);
 
-        if (line.startsWith('TABLE_ROW;')) {
-            const parts = line.substring(10).split(';');
-            if (parts.length < 4) return; // Must have at least ITEM;KEY;RANGE;COL0
-
-            const [item, dataKey, timeRange, ...columns] = parts;
-
-            const lastUnderscoreIndex = dataKey.lastIndexOf('_');
-            if (lastUnderscoreIndex === -1) return; // Invalid format for dataKey
-
-            const tableName = dataKey.substring(0, lastUnderscoreIndex);
-            
-            // Initialize structures
-            initializeItem(item);
-            if (!rawTableData[item]) {
-                rawTableData[item] = {};
-            }
-            if (!rawTableData[item][tableName]) {
-                rawTableData[item][tableName] = { rows: [] };
-            }
-
-            rawTableData[item][tableName].rows.push({ timeRange, columns });
-
-        } else { // Graph data
-            const parts = line.split(';');
-            if (parts.length !== 4) return;
-            const [item, timeRange, dataName, value] = parts.map(p => p.trim());
-            const isNumeric = !isNaN(parseFloat(value)) && isFinite(Number(value));
-
-            if (isNumeric) {
-                initializeItem(item);
-                if (!processed[item].graphs[dataName]) {
-                    processed[item].graphs[dataName] = { labels: [], values: [] };
+        if (dataType === 'numero' && parts.length === 5) {
+            const [, , , dataName, valueStr] = parts;
+            const value = parseFloat(valueStr);
+            if (!isNaN(value)) {
+                if (!processed[itemName].graphs[dataName]) {
+                    processed[itemName].graphs[dataName] = { labels: [], values: [] };
                 }
-                const tempData = processed[item].graphs[dataName] as any;
+                const tempData = processed[itemName].graphs[dataName] as any;
                 if (!tempData.tuples) tempData.tuples = [];
-                tempData.tuples.push({ timeRange, value: Number(value) });
+                tempData.tuples.push({ timeRange, value });
             }
+        } else if (dataType === 'tabla' && parts.length >= 6) {
+            const [, , , tableName, keyIndexStr, ...columns] = parts;
+            const keyIndex = parseInt(keyIndexStr, 10);
+
+            if (isNaN(keyIndex) || keyIndex < 1) return;
+
+            if (!rawTableData[itemName]) rawTableData[itemName] = {};
+            if (!rawTableData[itemName][tableName]) {
+                rawTableData[itemName][tableName] = { keyIndex, rows: [] };
+            }
+            
+            rawTableData[itemName][tableName].rows.push({ timeRange, columns });
         }
     });
 
@@ -128,56 +122,75 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
     for (const itemName in rawTableData) {
         for (const tableName in rawTableData[itemName]) {
             const tableData = rawTableData[itemName][tableName];
-            const { rows } = tableData;
-            
+            const { keyIndex, rows } = tableData;
+
             if (rows.length === 0) continue;
+            
+            // 1-based to 0-based index
+            const groupingColumnIndex = keyIndex - 1;
+            const valueColumnIndex = rows[0].columns.length - 1;
 
-            const valueColumnIndex = rows[0].columns.length - 1; // Assume last column is the numeric value
+            if (groupingColumnIndex >= valueColumnIndex || groupingColumnIndex < 0) continue;
 
-            // 1. Group rows by a composite key of all non-value columns
-            const groupedData = new Map<string, { keyColumns: string[], rows: { timeRange: string, value: number }[] }>();
+            // 1. Aggregate data by grouping key
+            const aggregatedData = new Map<string, {
+                otherKeyColumns: string[];
+                total: number;
+                timeData: Map<string, number>;
+            }>();
+            
+            const allTimeRanges = new Set<string>();
 
             rows.forEach(row => {
-                const keyColumns = row.columns.slice(0, valueColumnIndex);
-                const groupKey = keyColumns.join('||'); // Composite key
+                allTimeRanges.add(row.timeRange);
+                const groupingValue = row.columns[groupingColumnIndex];
                 const valueStr = row.columns[valueColumnIndex];
                 const value = parseFloat(valueStr) || 0;
 
-                if (!groupedData.has(groupKey)) {
-                    groupedData.set(groupKey, { keyColumns, rows: [] });
+                const otherKeyColumns = row.columns.filter((_, idx) => idx !== groupingColumnIndex && idx !== valueColumnIndex);
+
+                if (!aggregatedData.has(groupingValue)) {
+                    aggregatedData.set(groupingValue, {
+                        otherKeyColumns, // Assume these are consistent for the same key
+                        total: 0,
+                        timeData: new Map()
+                    });
                 }
-                groupedData.get(groupKey)!.rows.push({ timeRange: row.timeRange, value });
+
+                const entry = aggregatedData.get(groupingValue)!;
+                entry.total += value;
+                entry.timeData.set(row.timeRange, (entry.timeData.get(row.timeRange) || 0) + value);
             });
 
-            // 2. Determine all unique time ranges and sort them
-            const timeRanges = [...new Set(rows.map(r => r.timeRange))].sort((a, b) => getSortableHour(a) - getSortableHour(b));
+            // 2. Determine sorted time ranges and create headers
+            const sortedTimeRanges = Array.from(allTimeRanges).sort((a, b) => getSortableHour(a) - getSortableHour(b));
+            
+            const numTextColumns = valueColumnIndex;
+            const textColumnHeaders = Array.from({ length: numTextColumns }, (_, i) => `Column ${i + 1}`);
+            const finalHeaders = [...textColumnHeaders, 'Total', ...sortedTimeRanges];
 
-            // 3. Create headers dynamically
-            const numKeyColumns = valueColumnIndex > 0 ? valueColumnIndex : 0;
-            const keyHeaders = Array.from({ length: numKeyColumns }, (_, i) => `Column ${i + 1}`);
-            const finalHeaders = [...keyHeaders, 'Total', ...timeRanges];
-
-            // 4. Build the pivoted rows from grouped data
+            // 3. Build the pivoted rows
             const pivotedRows: string[][] = [];
-            for (const data of groupedData.values()) {
-                const newRow: (string|number)[] = [...data.keyColumns];
-                
-                // Calculate Total
-                const total = data.rows.reduce((sum, r) => sum + r.value, 0);
-                newRow.push(total);
-
-                // Create a map for quick lookup of time range values
-                const timeRangeMap = new Map(data.rows.map(r => [r.timeRange, r.value]));
-                
-                // Fill in values for each time range column
-                for (const timeRange of timeRanges) {
-                    newRow.push(timeRangeMap.get(timeRange) || 0);
+            for (const [groupingValue, data] of aggregatedData.entries()) {
+                const textColumns: (string|number)[] = [];
+                let otherKeyColumnIndex = 0;
+                for (let i = 0; i < numTextColumns; i++) {
+                    if (i === groupingColumnIndex) {
+                        textColumns.push(groupingValue);
+                    } else {
+                        textColumns.push(data.otherKeyColumns[otherKeyColumnIndex++] || '');
+                    }
                 }
+                
+                const newRow = [
+                    ...textColumns,
+                    data.total,
+                    ...sortedTimeRanges.map(tr => data.timeData.get(tr) || 0)
+                ];
                 
                 pivotedRows.push(newRow.map(String));
             }
             
-            // 5. Store in final processed data structure, which now uses pivotTables for all tables
             if (!processed[itemName].pivotTables) processed[itemName].pivotTables = {};
             processed[itemName].pivotTables[tableName] = {
                 headers: finalHeaders,
@@ -185,7 +198,7 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
             };
         }
     }
-
+    
     // Post-processing: Sort graph data
     for (const item in processed) {
         for (const graphName in processed[item].graphs) {
