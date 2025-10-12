@@ -370,6 +370,164 @@ const ChartComponent = ({ chartData, chartType, chartLabel, setCanvasRef, isZoom
     return <div className="chart-container-inner" style={{ height: isZoomed ? '100%' : '300px' }}><canvas ref={canvasRef}></canvas></div>;
 };
 
+// --- CSV Comparator Component ---
+const CsvComparator = () => {
+    const [file1, setFile1] = useState<File | null>(null);
+    const [file2, setFile2] = useState<File | null>(null);
+    const [columnIndex1, setColumnIndex1] = useState('2');
+    const [columnIndex2, setColumnIndex2] = useState('3');
+    const [dataName, setDataName] = useState('SWT003 Detalle');
+    const [chartTitle, setChartTitle] = useState('Comparativa de Datos');
+    const [comparisonResult, setComparisonResult] = useState<{ orphans: number; nonOrphans: number; total: number } | null>(null);
+    const [error, setError] = useState<string>('');
+    const [isProcessing, setIsProcessing] = useState(false);
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, fileNumber: 1 | 2) => {
+        const file = e.target.files?.[0] || null;
+        if (fileNumber === 1) setFile1(file);
+        else setFile2(file);
+    };
+
+    const handleCompare = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError('');
+        setComparisonResult(null);
+        setIsProcessing(true);
+
+        if (!file1 || !file2 || !columnIndex1 || !columnIndex2) {
+            setError('Por favor, selecciona ambos archivos y especifica los índices de las columnas.');
+            setIsProcessing(false);
+            return;
+        }
+
+        const col1 = parseInt(columnIndex1, 10) - 1;
+        const col2 = parseInt(columnIndex2, 10) - 1;
+
+        if (isNaN(col1) || isNaN(col2) || col1 < 0 || col2 < 0) {
+            setError('Los índices de las columnas deben ser números positivos.');
+            setIsProcessing(false);
+            return;
+        }
+
+        try {
+            const text1 = await file1.text();
+            const text2 = await file2.text();
+
+            const parseCsv = (text: string) => text.split('\n').map(row => row.trim()).filter(row => row).map(row => row.split(';'));
+            
+            const data1 = parseCsv(text1);
+            const data2 = parseCsv(text2);
+            
+            const values1 = data1.map(row => row[col1]?.trim()).filter(Boolean);
+            const values2 = new Set(data2.map(row => row[col2]?.trim()).filter(Boolean));
+            
+            if(values1.length === 0 || values2.size === 0) {
+                setError('No se pudieron extraer datos de las columnas especificadas. Revisa los índices y el contenido de los archivos.');
+                setIsProcessing(false);
+                return;
+            }
+
+            let orphans = 0;
+            let nonOrphans = 0;
+            const total = values1.length;
+
+            for (const value of values1) {
+                if (values2.has(value)) {
+                    nonOrphans++;
+                } else {
+                    orphans++;
+                }
+            }
+
+            setComparisonResult({ orphans, nonOrphans, total });
+        } catch (e) {
+            setError('Error al leer o procesar los archivos. Asegúrate de que sean archivos CSV válidos.');
+            console.error(e);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    const isButtonDisabled = isProcessing || !file1 || !file2 || !columnIndex1 || !columnIndex2;
+
+    return (
+        <section className="card" aria-labelledby="csv-comparator-heading">
+            <h2 id="csv-comparator-heading" className="section-title">Comparador de CSV</h2>
+            <form onSubmit={handleCompare}>
+                <div className="form-grid csv-form-grid">
+                    <div className="form-group">
+                        <label htmlFor="data-name">Nombre del dato</label>
+                        <input type="text" id="data-name" value={dataName} onChange={(e) => setDataName(e.target.value)} required />
+                    </div>
+                     <div className="form-group">
+                        <label htmlFor="chart-title">Título del gráfico</label>
+                        <input type="text" id="chart-title" value={chartTitle} onChange={(e) => setChartTitle(e.target.value)} required />
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="csv-file-1">Archivo CSV 1</label>
+                         <div className="file-input-wrapper">
+                             <label htmlFor="csv-file-1" className="file-input-label">{file1 ? file1.name : 'Seleccionar archivo'}</label>
+                            <input type="file" id="csv-file-1" onChange={(e) => handleFileChange(e, 1)} accept=".csv" style={{ display: 'none' }} />
+                        </div>
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="column-index-1">Columna CSV 1</label>
+                        <input type="number" id="column-index-1" value={columnIndex1} onChange={(e) => setColumnIndex1(e.target.value)} min="1" required />
+                    </div>
+                     <div className="form-group">
+                        <label htmlFor="csv-file-2">Archivo CSV 2</label>
+                        <div className="file-input-wrapper">
+                             <label htmlFor="csv-file-2" className="file-input-label">{file2 ? file2.name : 'Seleccionar archivo'}</label>
+                            <input type="file" id="csv-file-2" onChange={(e) => handleFileChange(e, 2)} accept=".csv" style={{ display: 'none' }} />
+                        </div>
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="column-index-2">Columna CSV 2</label>
+                        <input type="number" id="column-index-2" value={columnIndex2} onChange={(e) => setColumnIndex2(e.target.value)} min="1" required />
+                    </div>
+                </div>
+                 <div className="form-actions" style={{marginTop: '1.5rem', justifyContent: 'center'}}>
+                    <button type="submit" className="submit-btn" disabled={isButtonDisabled}>
+                        {isProcessing ? 'Comparando...' : 'Comparar Archivos'}
+                    </button>
+                </div>
+            </form>
+
+            <div className="comparison-results">
+                {isProcessing && <div className="status-container"><div className="spinner"></div><p>Procesando archivos...</p></div>}
+                {error && <div className="error-container" style={{marginTop: '1.5rem'}}>{error}</div>}
+                {comparisonResult && (
+                    <div className="card report-section" style={{marginTop: '2rem', padding: '1rem', border: 'none', boxShadow: 'none'}}>
+                        <h3 className="module-title" style={{textAlign: 'center', marginBottom: '1.5rem'}}>{chartTitle}</h3>
+                        <div className="chart-wrapper">
+                            <ChartComponent 
+                                chartType="bar"
+                                chartLabel="Registros"
+                                chartData={{ labels: ['Huérfanas', 'No Huérfanas'], values: [comparisonResult.orphans, comparisonResult.nonOrphans] }}
+                                setCanvasRef={() => {}}
+                            />
+                        </div>
+                         <div className="comparison-summary">
+                            <div className="summary-item">
+                                <span className="value">{comparisonResult.total}</span>
+                                <span className="label">Total Filas Analizadas</span>
+                            </div>
+                            <div className="summary-item">
+                                <span className="value non-orphan">{comparisonResult.nonOrphans}</span>
+                                <span className="label">Coincidencias (No Huérfanas)</span>
+                            </div>
+                            <div className="summary-item">
+                                <span className="value orphan">{comparisonResult.orphans}</span>
+                                <span className="label">Sin Coincidencias (Huérfanas)</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </section>
+    );
+};
+
 
 // --- Main App Component ---
 const App = () => {
@@ -857,6 +1015,8 @@ const App = () => {
                 </form>
                 <input type="file" ref={fileInputRef} onChange={handleJsonFileChange} accept=".json" style={{ display: 'none' }} aria-hidden="true" />
             </section>
+            
+            <CsvComparator />
             
             {renderContent()}
 
