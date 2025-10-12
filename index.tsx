@@ -68,7 +68,7 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
         return hour < 6 ? hour + 24 : hour;
     };
     
-    // Temporary structure for raw table data
+    // Temporary structure for raw table data to be pivoted
     const rawTableData: {
         [itemName: string]: {
             [tableName: string]: {
@@ -107,18 +107,26 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
             const [, , , tableName, keyIndexStr, ...columns] = parts;
             const keyIndex = parseInt(keyIndexStr, 10);
 
-            if (isNaN(keyIndex) || keyIndex < 1) return;
+            if (isNaN(keyIndex)) return;
 
-            if (!rawTableData[itemName]) rawTableData[itemName] = {};
-            if (!rawTableData[itemName][tableName]) {
-                rawTableData[itemName][tableName] = { keyIndex, rows: [] };
+            if (keyIndex > 0) {
+                // Data for pivoting
+                if (!rawTableData[itemName]) rawTableData[itemName] = {};
+                if (!rawTableData[itemName][tableName]) {
+                    rawTableData[itemName][tableName] = { keyIndex, rows: [] };
+                }
+                rawTableData[itemName][tableName].rows.push({ timeRange, columns });
+            } else {
+                // Data for standard, non-pivoted table (keyIndex is 0)
+                if (!processed[itemName].standardTables[tableName]) {
+                    processed[itemName].standardTables[tableName] = { rows: [] };
+                }
+                processed[itemName].standardTables[tableName].rows.push({ timeRange, columns });
             }
-            
-            rawTableData[itemName][tableName].rows.push({ timeRange, columns });
         }
     });
 
-    // --- PIVOTING LOGIC ---
+    // --- PIVOTING LOGIC --- (Only for tables with keyIndex > 0)
     for (const itemName in rawTableData) {
         for (const tableName in rawTableData[itemName]) {
             const tableData = rawTableData[itemName][tableName];
