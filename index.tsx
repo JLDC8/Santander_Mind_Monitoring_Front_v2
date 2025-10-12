@@ -96,7 +96,7 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
             if (!processed[item].pivotTables[dataName]) {
                 processed[item].pivotTables[dataName] = { headers: [], rows: [] };
             }
-            processed[item].pivotTables[dataName].headers = ['Key', ...headers];
+            processed[item].pivotTables[dataName].headers = headers;
 
         } else if (line.startsWith('PIVOT_ROW;')) {
             const parts = line.substring(10).split(';');
@@ -144,7 +144,7 @@ const parseAndOrganizeData = (rawData: string): ProcessedResults => {
             const pivotTable = processed[item].pivotTables[tableName];
             if (pivotTable.headers.length === 0 && pivotTable.rows.length > 0) {
                 const numCols = pivotTable.rows[0].length;
-                pivotTable.headers = ['Key', ...Array.from({ length: numCols - 1 }, (_, i) => `Value ${i + 1}`)];
+                pivotTable.headers = Array.from({ length: numCols }, (_, i) => `Column ${i + 1}`);
             }
         }
     }
